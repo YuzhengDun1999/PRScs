@@ -11,10 +11,11 @@ import numpy as np
 from scipy.stats import norm
 from scipy import linalg
 import h5py
+import pandas as pd
 
 
 def parse_ref(ref_file, chrom):
-    print('... parse reference file: %s ...' % ref_file)
+    #print('... parse reference file: %s ...' % ref_file)
 
     ref_dict = {'CHR':[], 'SNP':[], 'BP':[], 'A1':[], 'A2':[], 'MAF':[]}
     with open(ref_file) as ff:
@@ -29,12 +30,12 @@ def parse_ref(ref_file, chrom):
                 ref_dict['A2'].append(ll[4])
                 ref_dict['MAF'].append(float(ll[5]))
 
-    print('... %d SNPs on chromosome %d read from %s ...' % (len(ref_dict['SNP']), chrom, ref_file))
+    #print('... %d SNPs on chromosome %d read from %s ...' % (len(ref_dict['SNP']), chrom, ref_file))
     return ref_dict
 
 
 def parse_bim(bim_file, chrom):
-    print('... parse bim file: %s ...' % (bim_file + '.bim'))
+    #print('... parse bim file: %s ...' % (bim_file + '.bim'))
 
     vld_dict = {'SNP':[], 'A1':[], 'A2':[]}
     with open(bim_file + '.bim') as ff:
@@ -45,12 +46,12 @@ def parse_bim(bim_file, chrom):
                 vld_dict['A1'].append(ll[4])
                 vld_dict['A2'].append(ll[5])
 
-    print('... %d SNPs on chromosome %d read from %s ...' % (len(vld_dict['SNP']), chrom, bim_file + '.bim'))
+    #print('... %d SNPs on chromosome %d read from %s ...' % (len(vld_dict['SNP']), chrom, bim_file + '.bim'))
     return vld_dict
 
 
 def parse_sumstats(ref_dict, vld_dict, sst_file, n_subj):
-    print('... parse sumstats file: %s ...' % sst_file)
+    #print('... parse sumstats file: %s ...' % sst_file)
 
     ATGC = ['A', 'T', 'G', 'C']
     sst_dict = {'SNP':[], 'A1':[], 'A2':[]}
@@ -63,7 +64,7 @@ def parse_sumstats(ref_dict, vld_dict, sst_file, n_subj):
                 sst_dict['A1'].append(ll[1])
                 sst_dict['A2'].append(ll[2])
 
-    print('... %d SNPs read from %s ...' % (len(sst_dict['SNP']), sst_file))
+    #print('... %d SNPs read from %s ...' % (len(sst_dict['SNP']), sst_file))
 
 
     mapping = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
@@ -80,7 +81,7 @@ def parse_sumstats(ref_dict, vld_dict, sst_file, n_subj):
 
     comm_snp = vld_snp & ref_snp & sst_snp
 
-    print('... %d common SNPs in the reference, sumstats, and validation set ...' % len(comm_snp))
+    #print('... %d common SNPs in the reference, sumstats, and validation set ...' % len(comm_snp))
 
 
     n_sqrt = np.sqrt(n_subj)
@@ -158,7 +159,7 @@ def parse_sumstats(ref_dict, vld_dict, sst_file, n_subj):
 
 
 def parse_ldblk(ldblk_dir, sst_dict, chrom):
-    print('... parse reference LD on chromosome %d ...' % chrom)
+    #print('... parse reference LD on chromosome %d ...' % chrom)
 
     if '1kg' in os.path.basename(ldblk_dir):
         chr_name = ldblk_dir + '/ldblk_1kg_chr' + str(chrom) + '.hdf5'
@@ -185,7 +186,7 @@ def parse_ldblk(ldblk_dir, sst_dict, chrom):
 
             _, s, v = linalg.svd(ld_blk[blk])
             h = np.dot(v.T, np.dot(np.diag(s), v))
-            ld_blk[blk] = (ld_blk[blk]+h)/2            
+            ld_blk[blk] = (ld_blk[blk]+h)/2
 
             mm += len(idx)
         else:
@@ -194,3 +195,35 @@ def parse_ldblk(ldblk_dir, sst_dict, chrom):
     return ld_blk, blk_size
 
 
+def get_resid_cor(ldblk_dir, sumstat_df, result_df):
+    resid_cor = []; sumstat_merge = pd.merge(sumstat_df, result_df, on=['SNP'], how='left')
+    sumstat_merge['BETA_pst'] = sumstat_merge['BETA_pst'].fillna(0)
+    sst_dict = sumstat_merge.to_dict(orient='list')
+    for chrom in range(1, 23):
+        if '1kg' in os.path.basename(ldblk_dir):
+            chr_name = ldblk_dir + '/ldblk_1kg_chr' + str(chrom) + '.hdf5'
+        elif 'ukbb' in os.path.basename(ldblk_dir):
+            chr_name = ldblk_dir + '/ldblk_ukbb_chr' + str(chrom) + '.hdf5'
+
+        hdf_chr = h5py.File(chr_name, 'r')
+        n_blk = len(hdf_chr)
+        for blk in range(1, n_blk+1):
+            snp_list = [bb.decode("UTF-8") for bb in list(hdf_chr['blk_'+str(blk)]['snplist'])]
+            sumstat_tmp = sumstat_merge[sumstat_merge['SNP'].isin(snp_list)].copy()
+            if sumstat_tmp.shape[0] == 0:
+                continue
+            if (sumstat_tmp['BETA_pst'] == 0).all():
+                sumstat_tmp['cor'] = sumstat_tmp['BETA_pst']
+                resid_cor.append(sumstat_tmp[['SNP', 'cor']])
+                continue
+            ld = np.array(hdf_chr['blk_'+str(blk)]['ldblk'])
+            sumstat_tmp_dict = sumstat_tmp.to_dict(orient='list')
+            idx = [ii for (ii, snp) in enumerate(snp_list) if snp in sumstat_tmp_dict['SNP']]
+            flip = sumstat_tmp_dict['FLP']
+            ld = ld[np.ix_(idx,idx)]*np.outer(flip,flip)
+            sumstat_tmp['cor'] = np.array(sumstat_tmp['BETA']) - ld.dot(np.array(sumstat_tmp['BETA_pst']))
+            resid_cor.append(sumstat_tmp[['SNP', 'cor']])
+
+    resid_cor = pd.concat(resid_cor, axis=0, ignore_index=True)
+    resid_cor['cor'] = resid_cor['cor'].abs()
+    return resid_cor

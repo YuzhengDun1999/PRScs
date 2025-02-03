@@ -12,8 +12,8 @@ from numpy import random
 import gigrnd
 
 
-def mcmc(a, b, phi, sst_dict, n, ld_blk, blk_size, n_iter, n_burnin, thin, chrom, out_dir, beta_std, write_psi, write_pst, seed):
-    print('... MCMC ...')
+def mcmc(threshold, a, b, phi, sst_dict, n, ld_blk, blk_size, n_iter, n_burnin, thin, batch_iteration, out_dir, beta_std, write_psi, write_pst, seed):
+    #print('... MCMC ...')
 
     # seed
     if seed != None:
@@ -47,8 +47,8 @@ def mcmc(a, b, phi, sst_dict, n, ld_blk, blk_size, n_iter, n_burnin, thin, chrom
     # MCMC
     pp = 0
     for itr in range(1,n_iter+1):
-        if itr % 100 == 0:
-            print('--- iter-' + str(itr) + ' ---')
+        #if itr % 100 == 0:
+        #    print('--- iter-' + str(itr) + ' ---')
 
         mm = 0; quad = 0.0
         for kk in range(n_blk):
@@ -88,6 +88,14 @@ def mcmc(a, b, phi, sst_dict, n, ld_blk, blk_size, n_iter, n_burnin, thin, chrom
                 pp += 1
 
     # convert standardized beta to per-allele beta
+    beta_est[beta_est[:,0] < threshold, 0] = 0
+    active_SNP = []; beta_pst_std = []
+    for snp, beta in zip(sst_dict['SNP'], beta_est):
+        if beta == 0:
+            continue
+        active_SNP.append(snp)
+        beta_pst_std.append(beta[0])
+
     if beta_std == 'FALSE':
         beta_est /= np.sqrt(2.0*maf*(1.0-maf))
 
@@ -97,33 +105,33 @@ def mcmc(a, b, phi, sst_dict, n, ld_blk, blk_size, n_iter, n_burnin, thin, chrom
 
     # write posterior effect sizes
     if phi_updt == True:
-        eff_file = out_dir + '_pst_eff_a%d_b%.1f_phiauto_chr%d.txt' % (a, b, chrom)
+        eff_file = out_dir + '_pst_eff_a%d_b%.1f_phiauto_iteration%d.txt' % (a, b, batch_iteration)
     else:
-        eff_file = out_dir + '_pst_eff_a%d_b%.1f_phi%1.0e_chr%d.txt' % (a, b, phi, chrom)
+        eff_file = out_dir + '_pst_eff_a%d_b%.1f_phi%1.0e_iteration%d.txt' % (a, b, phi, batch_iteration)
 
     with open(eff_file, 'w') as ff:
         if write_pst == 'TRUE':
             for snp, bp, a1, a2, beta in zip(sst_dict['SNP'], sst_dict['BP'], sst_dict['A1'], sst_dict['A2'], beta_pst):
-                ff.write(('%d\t%s\t%d\t%s\t%s' + '\t%.6e'*n_pst + '\n') % (chrom, snp, bp, a1, a2, *beta))
+                if beta == 0:
+                    continue
+                ff.write(('%d\t%s\t%d\t%s\t%s' + '\t%.6e'*n_pst + '\n') % (batch_iteration, snp, bp, a1, a2, beta))
         else:
             for snp, bp, a1, a2, beta in zip(sst_dict['SNP'], sst_dict['BP'], sst_dict['A1'], sst_dict['A2'], beta_est):
-                ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (chrom, snp, bp, a1, a2, beta))
+                if beta == 0:
+                    continue
+                ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (batch_iteration, snp, bp, a1, a2, beta))
 
     # write posterior estimates of psi
     if write_psi == 'TRUE':
         if phi_updt == True:
-            psi_file = out_dir + '_pst_psi_a%d_b%.1f_phiauto_chr%d.txt' % (a, b, chrom)
+            psi_file = out_dir + '_pst_psi_a%d_b%.1f_phiauto_chr%d.txt' % (a, b, batch_iteration)
         else:
-            psi_file = out_dir + '_pst_psi_a%d_b%.1f_phi%1.0e_chr%d.txt' % (a, b, phi, chrom)
+            psi_file = out_dir + '_pst_psi_a%d_b%.1f_phi%1.0e_chr%d.txt' % (a, b, phi, batch_iteration)
 
         with open(psi_file, 'w') as ff:
             for snp, psi in zip(sst_dict['SNP'], psi_est):
                 ff.write('%s\t%.6e\n' % (snp, psi))
 
-    # print estimated phi
-    if phi_updt == True:
-        print('... Estimated global shrinkage parameter: %1.2e ...' % phi_est )
-
-    print('... Done ...')
+    return active_SNP, beta_pst_std
 
 

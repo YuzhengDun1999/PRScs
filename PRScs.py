@@ -23,17 +23,19 @@ import getopt
 import parse_genet
 import mcmc_gtb
 import gigrnd
-
+import pandas as pd
 
 def parse_param():
     long_opts_list = ['ref_dir=', 'bim_prefix=', 'sst_file=', 'a=', 'b=', 'phi=', 'n_gwas=',
-                      'n_iter=', 'n_burnin=', 'thin=', 'out_dir=', 'chrom=', 'beta_std=', 'write_psi=', 'write_pst=', 'seed=', 'help']
+                      'n_iter=', 'n_burnin=', 'thin=', 'out_dir=', 'beta_std=', 'write_psi=', 'write_pst=', 'seed=',
+                      'iteration=', 'threshold=', 'help']
 
     param_dict = {'ref_dir': None, 'bim_prefix': None, 'sst_file': None, 'a': 1, 'b': 0.5, 'phi': None, 'n_gwas': None,
                   'n_iter': 1000, 'n_burnin': 500, 'thin': 5, 'out_dir': None, 'chrom': range(1,23),
-                  'beta_std': 'FALSE', 'write_psi': 'FALSE', 'write_pst': 'FALSE', 'seed': None}
+                  'beta_std': 'FALSE', 'write_psi': 'FALSE', 'write_pst': 'FALSE', 'seed': None,
+                  'iteration': 50, 'threshold': None}
 
-    print('\n')
+    #print('\n')
 
     if len(sys.argv) > 1:
         try:
@@ -56,9 +58,10 @@ def parse_param():
             elif opt == "--n_gwas": param_dict['n_gwas'] = int(arg)
             elif opt == "--n_iter": param_dict['n_iter'] = int(arg)
             elif opt == "--n_burnin": param_dict['n_burnin'] = int(arg)
+            elif opt == "--iteration": param_dict['iteration'] = int(arg)
+            elif opt == "--threshold": param_dict['threshold'] = float(arg)
             elif opt == "--thin": param_dict['thin'] = int(arg)
             elif opt == "--out_dir": param_dict['out_dir'] = arg
-            elif opt == "--chrom": param_dict['chrom'] = arg.split(',')
             elif opt == "--beta_std": param_dict['beta_std'] = arg.upper()
             elif opt == "--write_psi": param_dict['write_psi'] = arg.upper()
             elif opt == "--write_pst": param_dict['write_pst'] = arg.upper()
@@ -93,9 +96,8 @@ def parse_param():
 def main():
     param_dict = parse_param()
 
-    for chrom in param_dict['chrom']:
-        print('##### process chromosome %d #####' % int(chrom))
-
+    sst_dict_all = {'CHR':[], 'SNP':[], 'BP':[], 'A1':[], 'A2':[], 'MAF':[], 'BETA':[], 'FLP':[]}
+    for chrom in range(1,23):
         if '1kg' in os.path.basename(param_dict['ref_dir']):
             ref_dict = parse_genet.parse_ref(param_dict['ref_dir'] + '/snpinfo_1kg_hm3', int(chrom))
         elif 'ukbb' in os.path.basename(param_dict['ref_dir']):
@@ -104,14 +106,41 @@ def main():
         vld_dict = parse_genet.parse_bim(param_dict['bim_prefix'], int(chrom))
 
         sst_dict = parse_genet.parse_sumstats(ref_dict, vld_dict, param_dict['sst_file'], param_dict['n_gwas'])
+        sst_dict_all['CHR'].extend(sst_dict['CHR'])
+        sst_dict_all['SNP'].extend(sst_dict['SNP'])
+        sst_dict_all['BP'].extend(sst_dict['BP'])
+        sst_dict_all['A1'].extend(sst_dict['A1'])
+        sst_dict_all['A2'].extend(sst_dict['A2'])
+        sst_dict_all['MAF'].extend(sst_dict['MAF'])
+        sst_dict_all['BETA'].extend(sst_dict['BETA'])
+        sst_dict_all['FLP'].extend(sst_dict['FLP'])
 
-        ld_blk, blk_size = parse_genet.parse_ldblk(param_dict['ref_dir'], sst_dict, int(chrom))
+    sumstat_df = pd.DataFrame(sst_dict_all)
+    resid_cor = sumstat_df[['SNP', 'BETA']]; resid_cor = resid_cor.copy()
+    resid_cor.loc[:, 'cor'] = resid_cor['BETA'].abs()
+    ever_active_SNP = []; candidate_SNP = []
+    for batch_screening_iter in range(param_dict['iteration']):
+        resid_cor = resid_cor[~resid_cor['SNP'].isin(ever_active_SNP)]
+        resid_cor_sorted = resid_cor.sort_values(by="cor", ascending=False)
+        resid_cor_sorted = resid_cor_sorted.head(1000)
+        SNP_selected = resid_cor_sorted['SNP']
+        if set(SNP_selected.tolist()).issubset(set(candidate_SNP)):
+            break
+        candidate_SNP = SNP_selected.tolist() + ever_active_SNP
+        candidate_SNP = list(set(candidate_SNP))
+        sumstat_candidate = sumstat_df[sumstat_df['SNP'].isin(candidate_SNP)].to_dict(orient='list')
+        ld_blk_all = []; blk_size_all = []
+        for chrom in range(1, 23):
+            ld_blk, blk_size = parse_genet.parse_ldblk(param_dict['ref_dir'], sumstat_candidate, int(chrom))
+            ld_blk_all = ld_blk_all + ld_blk
+            blk_size_all = blk_size_all + blk_size
 
-        mcmc_gtb.mcmc(param_dict['a'], param_dict['b'], param_dict['phi'], sst_dict, param_dict['n_gwas'], ld_blk, blk_size,
-            param_dict['n_iter'], param_dict['n_burnin'], param_dict['thin'], int(chrom), param_dict['out_dir'], param_dict['beta_std'],
-	    param_dict['write_psi'], param_dict['write_pst'], param_dict['seed'])
-
-        print('\n')
+        active_SNP, beta_pst_std = mcmc_gtb.mcmc(param_dict['threshold'], param_dict['a'], param_dict['b'], param_dict['phi'], sumstat_candidate, param_dict['n_gwas'], ld_blk_all,
+                                                 blk_size_all, param_dict['n_iter'], param_dict['n_burnin'], param_dict['thin'], batch_screening_iter, param_dict['out_dir'],
+                                                 param_dict['beta_std'], param_dict['write_psi'], param_dict['write_pst'], param_dict['seed'])
+        ever_active_SNP = ever_active_SNP + active_SNP
+        ever_active_SNP = list(set(ever_active_SNP))
+        resid_cor = parse_genet.get_resid_cor(param_dict['ref_dir'], sumstat_df, pd.DataFrame({'SNP':active_SNP, 'BETA_pst':beta_pst_std}))
 
 
 if __name__ == '__main__':
