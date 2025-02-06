@@ -88,7 +88,7 @@ def mcmc(threshold, a, b, phi, sst_dict, n, ld_blk, blk_size, n_iter, n_burnin, 
                 pp += 1
 
     # convert standardized beta to per-allele beta
-    beta_est[beta_est[:,0] < threshold, 0] = 0
+    beta_est[abs(beta_est[:,0]) < threshold, 0] = 0
     active_SNP = []; beta_pst_std = []
     for snp, beta in zip(sst_dict['SNP'], beta_est):
         if beta == 0:
