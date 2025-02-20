@@ -135,7 +135,7 @@ def main():
             ld_blk_all = ld_blk_all + ld_blk
             blk_size_all = blk_size_all + blk_size
 
-        active_SNP, beta_pst_std = mcmc_gtb.mcmc(param_dict['threshold'], param_dict['a'], param_dict['b'], param_dict['phi'], sumstat_candidate, param_dict['n_gwas'], ld_blk_all,
+        active_SNP, beta_pst_std = mcmc_gtb_proj.mcmc(param_dict['threshold'], param_dict['a'], param_dict['b'], param_dict['phi'], sumstat_candidate, param_dict['n_gwas'], ld_blk_all,
                                                  blk_size_all, param_dict['n_iter'], param_dict['n_burnin'], param_dict['thin'], batch_screening_iter, param_dict['out_dir'],
                                                  param_dict['beta_std'], param_dict['write_psi'], param_dict['write_pst'], param_dict['seed'])
         ever_active_SNP = ever_active_SNP + active_SNP
